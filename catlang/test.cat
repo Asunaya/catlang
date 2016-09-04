@@ -1,0 +1,6 @@
+(def a 0)
+(while true (set a (+ a 1)) (if (>= a 10) break nil))
+(cond (true (print 21)))
+(print a)
+(print "hi")
+(py print "hi")
