@@ -24,6 +24,7 @@ using max_##prop##_t = typename max_##prop<Ts...>::type
 
 MAX_PROPERTY(alignof);
 MAX_PROPERTY(sizeof);
+
 #undef MAX_PROPERTY
 
 template <bool b, bool... rest>
@@ -59,47 +60,45 @@ struct get_index
 	static constexpr int value = get_index_impl<0, T, U, Ts...>::value;
 };
 
+template <typename T>
+struct unique_ptr_with_copy : std::unique_ptr<T>
+{
+	using std::unique_ptr<T>::unique_ptr;
+
+	unique_ptr_with_copy(const unique_ptr_with_copy& src)
+	{
+		*this = std::make_unique<T>(*src.get());
+	}
+};
+
+template <typename T>
+struct recursive_variant_wrapper_tag : unique_ptr_with_copy<T> {};
+
 template <size_t alignment, size_t size, typename... Ts>
 struct variant_impl
 {
-	template <typename T, typename = std::enable_if_t<any_of<std::is_same<std::remove_reference_t<T>, Ts>::value...>::value>>
+	template <typename T, typename = std::enable_if_t<any_of<std::is_same<std::remove_const_t<std::remove_reference_t<T>>, Ts>::value...>::value>>
 	variant_impl(T&& obj)
 	{
-		new (buffer) std::remove_reference_t<T>(std::forward<T>(obj));
-		type_index = get_index<T, Ts...>::value;
+		using real_t = std::remove_const_t<std::remove_reference_t<T>>;
+		new (buffer) real_t(std::forward<T>(obj));
+		set_index<real_t>();
 	}
 
-	variant_impl(const variant_impl& src)
-	{
-		src.visit([&](auto&& val) {
-			using real_t = std::remove_const_t<std::remove_reference_t<decltype(val)>>;
-			new (buffer) real_t(reinterpret_cast<const real_t&>(src.buffer));
-			type_index = get_index<real_t, Ts...>::value;
-		});
-	}
+#define CONSTRUCT(qual) \
+	src.visit([&](auto&& val) { \
+		using real_t = std::remove_const_t<std::remove_reference_t<decltype(val)>>; \
+		new (buffer) real_t(reinterpret_cast<qual>(src.buffer)); \
+		set_index<real_t>(); \
+	});
 
-	variant_impl(variant_impl&& src)
-	{
-		src.visit([&](auto&& val) {
-			using real_t = std::remove_const_t<std::remove_reference_t<decltype(val)>>;
-			new (buffer) real_t(reinterpret_cast<real_t&&>(src.buffer));
-			type_index = get_index<real_t, Ts...>::value;
-		});
-	}
+	variant_impl(const variant_impl& src) { CONSTRUCT(const real_t&); }
+	variant_impl(variant_impl&& src) { CONSTRUCT(real_t&&); }
 
-	variant_impl& operator =(const variant_impl& src)
-	{
-		this->~variant_impl();
-		new (this) variant_impl(src);
-		return *this;
-	}
+#undef CONSTRUCT
 
-	variant_impl& operator =(variant_impl&& src)
-	{
-		this->~variant_impl();
-		new (this) variant_impl(std::move(src));
-		return *this;
-	}
+	variant_impl& operator =(const variant_impl& src) { return assign(src); }
+	variant_impl& operator =(variant_impl&& src) { return assign(std::move(src)); }
 
 	~variant_impl()
 	{
@@ -114,23 +113,55 @@ struct variant_impl
 	template <typename fn_t>
 	void visit(fn_t&& fn) const { visit_impl<fn_t, 0, Ts...>(std::forward<fn_t>(fn)); }
 
-	void* get_pointer() { return buffer; }
-	const void* get_pointer() const { return buffer; }
-
 	template <typename T, typename = std::enable_if_t<any_of<(std::is_same<T, Ts>::value || std::is_base_of<T, Ts>::value)...>::value>>
-	T& get_ref()
-	{
-		return reinterpret_cast<T&>(buffer);
-	}
+	auto& get_ref() { return reinterpret_cast<T&>(buffer); }
+	template <typename T, typename = std::enable_if_t<any_of<(std::is_same<T, Ts>::value || std::is_base_of<T, Ts>::value)...>::value>>
+	auto& get_ref() const { return reinterpret_cast<const T&>(buffer); }
 
 	auto get_type_index() const { return type_index; }
 
+	template <typename T>
+	static auto get_index_of_type() { return get_index<T, Ts...>::value; }
+
+	template <typename T>
+	auto is_type() const { return get_type_index() == get_index_of_type<T>(); }
+
 private:
+	template <typename T>
+	auto&& assign(T&& src)
+	{
+		this->~variant_impl();
+		new (this) variant_impl(std::forward<T>(src));
+		return *this;
+	}
+
+	template <typename T>
+	void set_index() { type_index = get_index<T, Ts...>::value; }
+
+	template <typename fn_t, typename T>
+	struct dummy
+	{
+		template <typename buffer_t>
+		static void call_visitor(fn_t&& fn, buffer_t* buffer)
+		{
+			fn(reinterpret_cast<T&>(*buffer));
+		}
+	};
+	template <typename fn_t, typename T>
+	struct dummy<fn_t, recursive_variant_wrapper_tag<T>>
+	{
+		template <typename buffer_t>
+		static void call_visitor(fn_t&& fn, buffer_t* buffer)
+		{
+			fn(reinterpret_cast<T&>(*reinterpret_cast<recursive_variant_wrapper_tag<T>&>(*buffer).get()));
+		}
+	};
+
 	template <typename fn_t, int cur_type_index, typename cur_type, typename... rest>
 	void visit_impl(fn_t&& fn)
 	{
 		if (cur_type_index == type_index)
-			fn(reinterpret_cast<cur_type&>(buffer));
+			dummy<fn_t, cur_type>::call_visitor(std::forward<fn_t>(fn), buffer);
 		else
 			visit_impl<fn_t, cur_type_index + 1, rest...>(std::forward<fn_t>(fn));
 	}
@@ -141,7 +172,7 @@ private:
 	void visit_impl(fn_t&& fn) const
 	{
 		if (cur_type_index == type_index)
-			fn(reinterpret_cast<const cur_type&>(buffer));
+			dummy<fn_t, const cur_type>::call_visitor(std::forward<fn_t>(fn), buffer);
 		else
 			visit_impl<fn_t, cur_type_index + 1, rest...>(std::forward<fn_t>(fn));
 	}
@@ -161,44 +192,73 @@ struct is_complete : std::false_type {};
 template <typename T>
 struct is_complete<T, decltype(void(sizeof(T)))> : std::true_type {};
 
-template <bool requires_completeness, template <typename...> class container, typename... Ts>
-struct recursive_variant_impl;
+struct recursive_variant_tag {};
 
-template <template <typename...> class container, typename... Ts>
-struct recursive_variant_impl<true, container, Ts...>
-	: variant_impl<
-	alignof(max_alignof_t<container<int>, Ts...>),
-	sizeof(max_sizeof_t<container<int>, Ts...>),
-	container<recursive_variant_impl<true, container, Ts...>>,
-	Ts...>
+template <typename T>
+struct identity
 {
-	using base = variant_impl<
-		alignof(max_alignof_t<container<int>, Ts...>),
-		sizeof(max_sizeof_t<container<int>, Ts...>),
-		container<recursive_variant_impl<true, container, Ts...>>,
-		Ts...>;
-	using base::base;
-	using container_of_this = container<recursive_variant_impl<true, container, Ts...>>;
-	static_assert(sizeof(container<int>) >= sizeof(container_of_this),
+	using type = T;
+};
+
+template <typename replacement, typename T>
+struct substitute : identity<T> {};
+
+template <typename replacement, typename T>
+using substitute_t = typename substitute<replacement, T>::type;
+
+template <typename replacement, typename T>
+struct substitute<replacement, const T> : identity<const substitute_t<replacement, T>> {};
+
+template <typename replacement, typename T>
+struct substitute<replacement, T&> : identity<substitute_t<replacement, T>&> {};
+
+template <typename replacement, typename T>
+struct substitute<replacement, T*> : identity<substitute_t<replacement, T>*> {};
+
+template <typename replacement>
+struct substitute<replacement, recursive_variant_tag> : identity<replacement> {};
+
+template <typename replacement, template <typename...> class U>
+struct substitute<replacement, U<recursive_variant_tag>>
+{
+	using type = std::conditional_t<
+		is_complete<U<replacement>>::value,
+		U<replacement>,
+		recursive_variant_wrapper_tag<U<replacement>>>;
+};
+
+template <typename replacement, typename T, template <typename...> class U>
+struct substitute<replacement, U<T>> : identity<U<substitute_t<replacement, T>>> {};
+
+template <typename replacement, typename ret, typename... args>
+struct substitute<replacement, ret(args...)> : identity<substitute_t<replacement, ret>(substitute_t<replacement, args>...)> {};
+
+template <typename replacement, typename T>
+struct substitute_dummy : substitute<replacement, T> {};
+
+template <typename replacement, typename T>
+using substitute_dummy_t = typename substitute_dummy<replacement, T>::type;
+
+template <typename replacement, template <typename...> class U>
+struct substitute_dummy<replacement, U<recursive_variant_tag>>
+{
+	using type = std::conditional_t<
+		is_complete<U<replacement>>::value,
+		U<int>,
+		recursive_variant_wrapper_tag<U<replacement>>>;
+	static_assert(!is_complete<U<replacement>>::value || sizeof(type) >= sizeof(U<replacement>),
 		"container is specialized with a larger size for recursive_variant than it has for int! not good!");
 };
 
-template <template <typename...> class container, typename... Ts>
-struct recursive_variant_impl<false, container, Ts...>
-	: variant_impl<
-	alignof(max_alignof_t<std::unique_ptr<container<recursive_variant_impl<false, container, Ts...>>>, Ts...>),
-	sizeof(max_sizeof_t<std::unique_ptr<container<recursive_variant_impl<false, container, Ts...>>>, Ts...>),
-	std::unique_ptr<container<recursive_variant_impl<false, container, Ts...>>>,
-	Ts...>
+template <typename... Ts>
+struct recursive_variant : variant_impl<
+	alignof(max_alignof_t<substitute_dummy_t<recursive_variant<Ts...>, Ts>...>),
+	sizeof(max_sizeof_t<substitute_dummy_t<recursive_variant<Ts...>, Ts>...>),
+	substitute_t<recursive_variant<Ts...>, Ts>...>
 {
 	using base = variant_impl<
-		alignof(max_alignof_t<std::unique_ptr<container<recursive_variant_impl<false, container, Ts...>>>, Ts...>),
-		sizeof(max_sizeof_t<std::unique_ptr<container<recursive_variant_impl<false, container, Ts...>>>, Ts...>),
-		std::unique_ptr<container<recursive_variant_impl<false, container, Ts...>>>,
-		Ts...>;
+		alignof(max_alignof_t<substitute_dummy_t<recursive_variant<Ts...>, Ts>...>),
+		sizeof(max_sizeof_t<substitute_dummy_t<recursive_variant<Ts...>, Ts>...>),
+		substitute_t<recursive_variant<Ts...>, Ts>...>;
 	using base::base;
 };
-
-template <template <typename...> class container, typename... Ts>
-using recursive_variant = recursive_variant_impl<
-	is_complete<container<recursive_variant_impl<true, container, Ts...>>>::value, container, Ts...>;
