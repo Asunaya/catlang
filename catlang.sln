@@ -7,12 +7,18 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "catlang", "catlang\catlang.
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Clang Debug|x64 = Clang Debug|x64
+		Clang Debug|x86 = Clang Debug|x86
 		Debug|x64 = Debug|x64
 		Debug|x86 = Debug|x86
 		Release|x64 = Release|x64
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C70D5004-BEF3-418A-A6A1-4925D56918B8}.Clang Debug|x64.ActiveCfg = Clang Debug|x64
+		{C70D5004-BEF3-418A-A6A1-4925D56918B8}.Clang Debug|x64.Build.0 = Clang Debug|x64
+		{C70D5004-BEF3-418A-A6A1-4925D56918B8}.Clang Debug|x86.ActiveCfg = Clang Debug|Win32
+		{C70D5004-BEF3-418A-A6A1-4925D56918B8}.Clang Debug|x86.Build.0 = Clang Debug|Win32
 		{C70D5004-BEF3-418A-A6A1-4925D56918B8}.Debug|x64.ActiveCfg = Debug|x64
 		{C70D5004-BEF3-418A-A6A1-4925D56918B8}.Debug|x64.Build.0 = Debug|x64
 		{C70D5004-BEF3-418A-A6A1-4925D56918B8}.Debug|x86.ActiveCfg = Debug|Win32

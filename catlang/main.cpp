@@ -21,6 +21,7 @@ static auto interpret_file(interpreter_t& interpreter, const char* filename)
 	if (file.fail())
 	{
 		std::cout << "Failed to open file " << filename << "!\n";
+		std::cin.get();
 		return -1;
 	}
 	interpret_lines(interpreter, file);
@@ -32,11 +33,12 @@ try
 {
 	interpreter_t interpreter;
 
-	if (argc == 1)
+	if (argc > 1)
 		return interpret_file(interpreter, argv[1]);
 
 	// REPL mode
 	interpret_lines(interpreter, std::cin);
+	return 0;
 }
 catch (std::runtime_error& e)
 {

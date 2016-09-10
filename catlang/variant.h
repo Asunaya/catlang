@@ -60,6 +60,12 @@ struct get_index
 	static constexpr int value = get_index_impl<0, T, U, Ts...>::value;
 };
 
+template <typename T, typename... Ts>
+struct is_part_of
+{
+	static constexpr auto value = any_of<std::is_same<std::remove_const_t<std::remove_reference_t<T>>, Ts>::value...>::value;
+};
+
 template <typename T>
 struct unique_ptr_with_copy : std::unique_ptr<T>
 {
@@ -77,7 +83,7 @@ struct recursive_variant_wrapper_tag : unique_ptr_with_copy<T> {};
 template <size_t alignment, size_t size, typename... Ts>
 struct variant_impl
 {
-	template <typename T, typename = std::enable_if_t<any_of<std::is_same<std::remove_const_t<std::remove_reference_t<T>>, Ts>::value...>::value>>
+	template <typename T, typename = std::enable_if_t<is_part_of<T, Ts...>::value>>
 	variant_impl(T&& obj)
 	{
 		using real_t = std::remove_const_t<std::remove_reference_t<T>>;
@@ -227,8 +233,8 @@ struct substitute<replacement, U<recursive_variant_tag>>
 		recursive_variant_wrapper_tag<U<replacement>>>;
 };
 
-template <typename replacement, typename T, template <typename...> class U>
-struct substitute<replacement, U<T>> : identity<U<substitute_t<replacement, T>>> {};
+template <typename replacement, typename... Ts, template <typename...> class U>
+struct substitute<replacement, U<Ts...>> : identity<U<substitute_t<replacement, Ts>...>> {};
 
 template <typename replacement, typename ret, typename... args>
 struct substitute<replacement, ret(args...)> : identity<substitute_t<replacement, ret>(substitute_t<replacement, args>...)> {};

@@ -23,7 +23,7 @@ static std::array<int, 2> find_next_token(const std::string& expr, size_t pos)
 
 	auto end = start + 1;
 
-	while (end < expr.length() && expr[end] != ' ' && expr[end] != ')')
+	while (end < static_cast<int>(expr.length()) && expr[end] != ' ' && expr[end] != ')')
 		++end;
 
 	return{ {start, end} };
@@ -103,7 +103,7 @@ list_t interpreter_t::get_abstract_syntax_tree(const list_t& sst)
 			else if (double_result.first)
 				ret_list.emplace_back(double_result.second);
 			else if (str[0] == '\"' && str[str.length() - 1] == '\"')
-				ret_list.emplace_back(std::string{ slice(str, 1, -3) });
+				ret_list.emplace_back(std::string{ slice(str, 1, -1) });
 			else
 			{
 				auto it = statements.find(str);
@@ -120,33 +120,22 @@ list_t interpreter_t::get_abstract_syntax_tree(const list_t& sst)
 
 object interpreter_t::expand_list(const list_t & list)
 {
-	//list_t ret_list;
-
-	if (list[0].is_type<statement>())
-	{
-		//std::cout << "Expanding statement " << list[0].get_ref<statement>() << std::endl;
-		auto stmt = list[0].get_ref<statement>();
-		auto it = statements.find(stmt);
-		if (it == statements.end())
-			throw std::runtime_error{ std::string{ "Unknown statement " } +stmt };
-		auto ret = it->second(list, variables);
-		if (ret.is_type<list_t>())
-			return expand_list(ret.get_ref<list_t>());
-		else
-			return ret;
-	}
-
 	return list;
 }
 
-object interpreter_t::evaluate_list(const object& obj, variable_map& variables)
+object context_t::evaluate_list(const object& obj)
 {
+	//std::cout << "Evaluating " << obj << std::endl;
+
 	if (!obj.is_type<list_t>())
 	{
 		if (obj.is_type<variable_reference>())
 		{
 			auto&& var = obj.get_ref<variable_reference>();
-			return variables.at(var);
+			auto it = variable_map.find(var);
+			if (it == variable_map.end())
+				throw std::runtime_error{ std::string{ "Undefined variable " } +var };
+			return *it->second;
 		}
 		return obj;
 	}
@@ -163,57 +152,54 @@ object interpreter_t::evaluate_list(const object& obj, variable_map& variables)
 	{
 		auto&& var = list[0].get_ref<variable_reference>();
 		list_t new_list;
-		new_list.emplace_back(variables.at(var));
+		new_list.emplace_back(*variable_map.at(var));
 		new_list.insert(new_list.end(), list.begin() + 1, list.end());
-		return evaluate_list(new_list, variables);
+		return evaluate_list(new_list);
 	}
 
 	if (list[0].is_type<statement>())
 	{
 		auto stmt = list[0].get_ref<statement>();
-		auto it = statements.find(stmt);
-		if (it == statements.end())
+		auto it = interpreter.statements.find(stmt);
+		if (it == interpreter.statements.end())
 			throw std::runtime_error{ std::string{ "Unknown statement " } +stmt };
-		return it->second(list, variables);
+		return it->second(list, *this);
 	}
 
 	if (list[0].is_type<lambda_t>())
 	{
 		auto&& lambda = list[0].get_ref<lambda_t>();
-		auto new_variables = variables;
+		auto new_context{ *this };
 
 		int i = 1;
 		for (auto&& param : lambda.parameters)
 		{
-			auto pair = new_variables.emplace(std::make_pair(param, evaluate_list(list[i])));
+			new_context.add_variable(param, std::make_shared<object>(evaluate_list(list[i])));
 			++i;
 		}
 
-		return evaluate_list(lambda.body, new_variables);
+		return new_context.evaluate_list(lambda.body);
 	}
 
 	if (list[0].is_type<builtin_func_t>())
 	{
 		auto&& func = list[0].get_ref<builtin_func_t>();
 
-		return evaluate_list(func(list));
+		return evaluate_list(func(list, *this));
 	}
+
+	if (list.size() == 1)
+		return list[0];
 
 	list_t ret_list;
 
 	for (auto&& item : list)
-		if (item.is_type<list_t>())
-			ret_list.emplace_back(evaluate_list(item.get_ref<list_t>(), variables));
+		ret_list.emplace_back(evaluate_list(item));
 
-	return ret_list;
+	return evaluate_list(ret_list);
 }
 
-object interpreter_t::evaluate_list(const object & list)
-{
-	return evaluate_list(list, variables);
-}
-
-static bool is_truthy(interpreter_t& interpreter, const object& obj)
+static bool is_truthy(context_t& context, const object& obj)
 {
 	if (obj.is_type<list_t>())
 	{
@@ -221,11 +207,13 @@ static bool is_truthy(interpreter_t& interpreter, const object& obj)
 		if (list.quoted)
 			return true;
 		else
-			return is_truthy(interpreter, interpreter.evaluate_list(list));
+			return is_truthy(context, context.evaluate_list(list));
 	}
 
 	if (obj.is_type<nil_t>())
 		return false;
+	if (obj.is_type<bool>())
+		return obj.get_ref<bool>();
 	if (obj.is_type<int64_t>())
 		return obj.get_ref<int64_t>() != 0;
 	if (obj.is_type<double>())
@@ -237,21 +225,47 @@ static bool is_truthy(interpreter_t& interpreter, const object& obj)
 }
 
 interpreter_t::interpreter_t()
+	: global_context{ *this, {} }
 {
-	auto def = [&](auto&& list, auto&& variables) -> object
+	auto make_lambda = [&](const list_t& parameters, const list_t& body)
 	{
-		auto variable_name = list[1].template get_ref<std::string>();
-		auto value = evaluate_list(list[2]);
+		std::vector<std::string> vec_params;
+		for (auto&& param : parameters)
+			vec_params.push_back(param.get_ref<std::string>());
+		return lambda_t{ vec_params, body };
+	};
 
-		auto it = variables.find(variable_name);
-		if (it == variables.end())
-			variables.emplace(std::make_pair(variable_name, value));
-		else
-			it->second = value;
+	auto lambda = [&](auto&& list, auto&&) -> object
+	{
+		auto&& parameters = list[1].template get_ref<list_t>();
+		auto&& body = list[2].template get_ref<list_t>();
+		return make_lambda(parameters, body);
+	};
+
+	statements["lambda"] = lambda;
+
+
+	auto def = [&](auto&& list, auto&& context) -> object
+	{
+		if (list[1].is_type<list_t>())
+		{
+			auto&& list1 = list[1].get_ref<list_t>();
+			auto&& name = list1[0].get_ref<std::string>();
+			auto value = make_lambda(slice(list1, 1), list[2].get_ref<list_t>());
+			context.add_variable(name, std::make_shared<object>(value));
+			//std::cout << "def function: " << name << " = " << value << std::endl;
+			return value;
+		}
+
+		auto&& name = list[1].template get_ref<std::string>();
+		auto value = context.evaluate_list(list[2]);
+		context.add_variable(name, std::make_shared<object>(value));
+		//std::cout << "def: " << name << " = " << value << std::endl;
 		return nil_t{};
 	};
 
 	statements["def"] = def;
+	statements["set"] = def;
 
 
 	auto cond = [&](auto&& list, auto&&) -> object
@@ -261,8 +275,9 @@ interpreter_t::interpreter_t()
 		for (auto&& item : conditions)
 		{
 			auto&& list_item = item.template get_ref<list_t>();
-			if (is_truthy(*this, evaluate_list(list_item[0])))
-				return evaluate_list(list_item[1]);
+			//std::cout << "cond: evaluating " << list_item[0] << std::endl;
+			if (is_truthy(global_context, global_context.evaluate_list(list_item[0])))
+				return global_context.evaluate_list(list_item[1]);
 		}
 
 		return nil_t{};
@@ -271,10 +286,23 @@ interpreter_t::interpreter_t()
 	statements["cond"] = cond;
 
 
-	auto vars = [&](auto&&, auto&& variables) -> object
+	auto while_ = [&](auto&& list, auto&& context) -> object
 	{
-		for (auto&& pair : variables)
-			std::cout << pair.first << " -> " << pair.second << std::endl;
+		auto condition = list[1];
+
+		while (is_truthy(context, context.evaluate_list(condition)))
+			context.evaluate_list(slice(list, 2));
+
+		return nil_t{};
+	};
+
+	statements["while"] = while_;
+
+
+	auto vars = [&](auto&&, auto&& context) -> object
+	{
+		for (auto&& pair : context.variable_map)
+			std::cout << pair.first << " -> " << *pair.second << std::endl;
 
 		return nil_t{};
 	};
@@ -282,14 +310,9 @@ interpreter_t::interpreter_t()
 	statements["vars"] = vars;
 
 
-	auto print = [&](auto&& list, auto&& variables) -> object
+	auto print = [&](auto&& list, auto&& context) -> object
 	{
-		auto variable_name = list[1].template get_ref<std::string>();
-		auto it = variables.find(variable_name);
-		if (it == variables.end())
-			throw std::runtime_error{ std::string{ "Undefined variable " } +variable_name };
-
-		std::cout << "Print: " << it->second << std::endl;
+		std::cout << context.evaluate_list(list[1]) << std::endl;
 
 		return nil_t{};
 	};
@@ -297,27 +320,41 @@ interpreter_t::interpreter_t()
 	statements["print"] = print;
 
 
-	auto lambda = [&](auto&& list, auto&&) -> object
+	auto if_ = [&](auto&& list, auto&& context) -> object
 	{
-		auto parameters = list[1].template get_ref<list_t>();
-		std::vector<std::string> vec_params;
-		for (auto&& param : parameters)
-			vec_params.push_back(param.template get_ref<std::string>());
-		auto&& body = list[2].template get_ref<list_t>();
-		return lambda_t{ vec_params, body };
+		return is_truthy(context, context.evaluate_list(list[1])) ? context.evaluate_list(list[2]) : context.evaluate_list(list[3]);
 	};
 
-	statements["lambda"] = lambda;
+	statements["if"] = if_;
 
-	auto plus = [&](auto&& list) -> object
-	{
-		return evaluate_list(list[1]) + evaluate_list(list[2]);
-	};
+#define MAKE_OP_IMPL(op, name) \
+	auto name = [&](auto&& list, auto&& context) -> object \
+	{ \
+		return context.evaluate_list(list[1]) op context.evaluate_list(list[2]); \
+	}; \
+	global_context.add_variable(#op, std::make_shared<object>(builtin_func_t{ name }))
+#define MAKE_OP(op) MAKE_OP_IMPL(op, TOKENIZE(oper, __COUNTER__))
 
-	variables.emplace(std::make_pair("+", builtin_func_t{plus}));
+	MAKE_OP(+);
+	MAKE_OP(-);
+	MAKE_OP(*);
+	MAKE_OP(/);
+	MAKE_OP(<);
+	MAKE_OP(>);
+	MAKE_OP(<=);
+	MAKE_OP(>=);
+
+#undef MAKE_OP
+#undef MAKE_OP_IMPL
+
+	global_context.add_variable("true", std::make_shared<object>(true));
+	global_context.add_variable("false", std::make_shared<object>(false));
+	global_context.add_variable("nil", std::make_shared<object>(nil_t{}));
 }
 
 void interpreter_t::interpret_line(const std::string & expr)
 {
-	std::cout << evaluate_list(expand_list(get_abstract_syntax_tree(get_string_list(expr)))) << std::endl;
+	auto val = global_context.evaluate_list(expand_list(get_abstract_syntax_tree(get_string_list(expr))));
+	if (!val.is_type<nil_t>())
+		std::cout << val << std::endl;
 }
