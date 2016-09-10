@@ -25,6 +25,7 @@ static auto interpret_file(interpreter_t& interpreter, const char* filename)
 		return -1;
 	}
 	interpret_lines(interpreter, file);
+	std::cin.get();
 	return 0;
 }
 

@@ -125,7 +125,7 @@ object interpreter_t::expand_list(const list_t & list)
 
 object context_t::evaluate_list(const object& obj)
 {
-	std::cout << "Evaluating " << obj << std::endl;
+	//std::cout << "Evaluating " << obj << std::endl;
 
 	if (!obj.template is_type<list_t>())
 	{
@@ -189,7 +189,7 @@ object context_t::evaluate_list(const object& obj)
 	}
 
 	if (list.size() == 1)
-		return list[0];
+		return evaluate_list(list[0]);
 
 	list_t ret_list;
 
@@ -260,7 +260,7 @@ interpreter_t::interpreter_t()
 		auto&& name = list[1].get_ref<std::string>();
 		auto value = context.evaluate_list(list[2]);
 		context.add_variable(name, std::make_shared<object>(value));
-		std::cout << "def: " << name << " = " << value << std::endl;
+		//std::cout << "def: " << name << " = " << value << std::endl;
 		return nil_t{};
 	};
 
