@@ -125,9 +125,9 @@ object interpreter_t::expand_list(const list_t & list)
 
 object context_t::evaluate_list(const object& obj)
 {
-	//std::cout << "Evaluating " << obj << std::endl;
+	std::cout << "Evaluating " << obj << std::endl;
 
-	if (!obj.is_type<list_t>())
+	if (!obj.template is_type<list_t>())
 	{
 		if (obj.is_type<variable_reference>())
 		{
@@ -169,7 +169,7 @@ object context_t::evaluate_list(const object& obj)
 	if (list[0].is_type<lambda_t>())
 	{
 		auto&& lambda = list[0].get_ref<lambda_t>();
-		auto new_context{ *this };
+		auto new_context = *this;
 
 		int i = 1;
 		for (auto&& param : lambda.parameters)
@@ -235,17 +235,17 @@ interpreter_t::interpreter_t()
 		return lambda_t{ vec_params, body };
 	};
 
-	auto lambda = [&](auto&& list, auto&&) -> object
+	auto lambda = [&](const list_t& list, context_t&) -> object
 	{
-		auto&& parameters = list[1].template get_ref<list_t>();
-		auto&& body = list[2].template get_ref<list_t>();
+		auto&& parameters = list[1].get_ref<list_t>();
+		auto&& body = list[2].get_ref<list_t>();
 		return make_lambda(parameters, body);
 	};
 
 	statements["lambda"] = lambda;
 
 
-	auto def = [&](auto&& list, auto&& context) -> object
+	auto def = [&](const list_t& list, context_t& context) -> object
 	{
 		if (list[1].is_type<list_t>())
 		{
@@ -257,10 +257,10 @@ interpreter_t::interpreter_t()
 			return value;
 		}
 
-		auto&& name = list[1].template get_ref<std::string>();
+		auto&& name = list[1].get_ref<std::string>();
 		auto value = context.evaluate_list(list[2]);
 		context.add_variable(name, std::make_shared<object>(value));
-		//std::cout << "def: " << name << " = " << value << std::endl;
+		std::cout << "def: " << name << " = " << value << std::endl;
 		return nil_t{};
 	};
 
@@ -268,13 +268,13 @@ interpreter_t::interpreter_t()
 	statements["set"] = def;
 
 
-	auto cond = [&](auto&& list, auto&&) -> object
+	auto cond = [&](const list_t& list, context_t&) -> object
 	{
 		auto conditions = slice(list, 1);
 
 		for (auto&& item : conditions)
 		{
-			auto&& list_item = item.template get_ref<list_t>();
+			auto&& list_item = item.get_ref<list_t>();
 			//std::cout << "cond: evaluating " << list_item[0] << std::endl;
 			if (is_truthy(global_context, global_context.evaluate_list(list_item[0])))
 				return global_context.evaluate_list(list_item[1]);
@@ -286,7 +286,7 @@ interpreter_t::interpreter_t()
 	statements["cond"] = cond;
 
 
-	auto while_ = [&](auto&& list, auto&& context) -> object
+	auto while_ = [&](const list_t& list, context_t& context) -> object
 	{
 		auto condition = list[1];
 
@@ -299,7 +299,7 @@ interpreter_t::interpreter_t()
 	statements["while"] = while_;
 
 
-	auto vars = [&](auto&&, auto&& context) -> object
+	auto vars = [&](const list_t&, context_t& context) -> object
 	{
 		for (auto&& pair : context.variable_map)
 			std::cout << pair.first << " -> " << *pair.second << std::endl;
@@ -310,7 +310,7 @@ interpreter_t::interpreter_t()
 	statements["vars"] = vars;
 
 
-	auto print = [&](auto&& list, auto&& context) -> object
+	auto print = [&](const list_t& list, context_t& context) -> object
 	{
 		std::cout << context.evaluate_list(list[1]) << std::endl;
 
@@ -320,7 +320,7 @@ interpreter_t::interpreter_t()
 	statements["print"] = print;
 
 
-	auto if_ = [&](auto&& list, auto&& context) -> object
+	auto if_ = [&](const list_t& list, context_t& context) -> object
 	{
 		return is_truthy(context, context.evaluate_list(list[1])) ? context.evaluate_list(list[2]) : context.evaluate_list(list[3]);
 	};
@@ -328,7 +328,7 @@ interpreter_t::interpreter_t()
 	statements["if"] = if_;
 
 #define MAKE_OP_IMPL(op, name) \
-	auto name = [&](auto&& list, auto&& context) -> object \
+	auto name = [&](const list_t& list, context_t& context) -> object \
 	{ \
 		return context.evaluate_list(list[1]) op context.evaluate_list(list[2]); \
 	}; \

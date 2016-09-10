@@ -111,7 +111,7 @@ inline std::ostream& operator <<(std::ostream& lhs, const list_t& rhs)
 	return lhs;
 }
 
-#ifdef _MSC_VER
+#ifndef __clang__
 #define CHECK auto check = [&](auto&& val) { return val.is_type<int64_t>() || val.is_type<double>(); };
 #define CHECK_INT auto check = [&](auto&& val) { return val.is_type<int64_t>(); };
 #else

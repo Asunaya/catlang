@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <cstdint>
 #include "basic_types.h"
 
 std::string slice(const std::string& expr, int start, int end);

@@ -267,4 +267,5 @@ struct recursive_variant : variant_impl<
 		sizeof(max_sizeof_t<substitute_dummy_t<recursive_variant<Ts...>, Ts>...>),
 		substitute_t<recursive_variant<Ts...>, Ts>...>;
 	using base::base;
+	using base::operator=;
 };
