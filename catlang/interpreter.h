@@ -15,7 +15,11 @@ struct context_t
 	object evaluate_list(const object& list);
 
 	void add_variable(const std::string& name, std::shared_ptr<object> obj) {
-		variable_map.insert_or_assign(name, obj);
+		auto it = variable_map.find(name);
+		if (it == variable_map.end())
+			variable_map.emplace(std::make_pair(name, obj));
+		else
+			it->second = obj;
 	}
 
 	struct interpreter_t& interpreter;

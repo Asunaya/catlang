@@ -94,8 +94,8 @@ struct variant_impl
 #define CONSTRUCT(qual) \
 	src.visit([&](auto&& val) { \
 		using real_t = std::remove_const_t<std::remove_reference_t<decltype(val)>>; \
-		new (buffer) real_t(reinterpret_cast<qual>(src.buffer)); \
-		set_index<real_t>(); \
+		new (buffer) real_t(static_cast<qual>(val)); \
+		this->set_index<real_t>(); \
 	});
 
 	variant_impl(const variant_impl& src) { CONSTRUCT(const real_t&); }
@@ -227,13 +227,14 @@ struct substitute<replacement, recursive_variant_tag> : identity<replacement> {}
 template <typename replacement, template <typename...> class U>
 struct substitute<replacement, U<recursive_variant_tag>>
 {
-	using type = std::conditional_t<
+	/*using type = std::conditional_t<
 		is_complete<U<replacement>>::value,
 		U<replacement>,
-		recursive_variant_wrapper_tag<U<replacement>>>;
+		recursive_variant_wrapper_tag<U<replacement>>>;*/
+	using type = U<replacement>;
 };
 
-template <typename replacement, typename... Ts, template <typename...> class U>
+template <typename replacement, template <typename...> class U, typename... Ts>
 struct substitute<replacement, U<Ts...>> : identity<U<substitute_t<replacement, Ts>...>> {};
 
 template <typename replacement, typename ret, typename... args>
@@ -248,13 +249,17 @@ using substitute_dummy_t = typename substitute_dummy<replacement, T>::type;
 template <typename replacement, template <typename...> class U>
 struct substitute_dummy<replacement, U<recursive_variant_tag>>
 {
-	using type = std::conditional_t<
+	/*using type = std::conditional_t<
 		is_complete<U<replacement>>::value,
 		U<int>,
-		recursive_variant_wrapper_tag<U<replacement>>>;
-	static_assert(!is_complete<U<replacement>>::value || sizeof(type) >= sizeof(U<replacement>),
-		"container is specialized with a larger size for recursive_variant than it has for int! not good!");
+		recursive_variant_wrapper_tag<U<replacement>>>;*/
+	using type = U<int>;
+	/*static_assert(!is_complete<U<replacement>>::value || sizeof(type) >= sizeof(U<replacement>),
+		"container is specialized with a larger size for recursive_variant than it has for int! not good!");*/
 };
+
+template <typename replacement, template <typename...> class U, typename... Ts>
+struct substitute_dummy<replacement, U<Ts...>> : identity<U<substitute_dummy_t<replacement, Ts>...>> {};
 
 template <typename... Ts>
 struct recursive_variant : variant_impl<

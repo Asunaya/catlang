@@ -127,7 +127,7 @@ object context_t::evaluate_list(const object& obj)
 {
 	//std::cout << "Evaluating " << obj << std::endl;
 
-	if (!obj.template is_type<list_t>())
+	if (!obj.is_type<list_t>())
 	{
 		if (obj.is_type<variable_reference>())
 		{
@@ -225,7 +225,7 @@ static bool is_truthy(context_t& context, const object& obj)
 }
 
 interpreter_t::interpreter_t()
-	: global_context{ *this, {} }
+	: global_context{ *this, variable_map_t{} }
 {
 	auto make_lambda = [&](const list_t& parameters, const list_t& body)
 	{
@@ -254,7 +254,7 @@ interpreter_t::interpreter_t()
 			auto value = make_lambda(slice(list1, 1), list[2].get_ref<list_t>());
 			context.add_variable(name, std::make_shared<object>(value));
 			//std::cout << "def function: " << name << " = " << value << std::endl;
-			return value;
+			return nil_t{};
 		}
 
 		auto&& name = list[1].get_ref<std::string>();

@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <cstdint>
 #include <functional>
+#include <iostream>
+using std::int64_t;
 
 #define TOKENIZE_IMPL(a, b) a##b
 #define TOKENIZE(a, b) TOKENIZE_IMPL(a, b)
@@ -15,15 +17,15 @@ struct list_impl : std::vector<T>
 {
 	using std::vector<T>::vector;
 
-	template <typename T>
-	void visit(T&& fn)
+	template <typename U>
+	void visit(U&& fn)
 	{
 		for (auto&& item : *this)
 			item.visit(fn);
 	}
 
-	template <typename T>
-	void visit(T&& fn) const
+	template <typename U>
+	void visit(U&& fn) const
 	{
 		for (auto&& item : *this)
 			item.visit(fn);
@@ -111,7 +113,7 @@ inline std::ostream& operator <<(std::ostream& lhs, const list_t& rhs)
 	return lhs;
 }
 
-#ifndef __clang__
+#ifdef _MSC_VER
 #define CHECK auto check = [&](auto&& val) { return val.is_type<int64_t>() || val.is_type<double>(); };
 #define CHECK_INT auto check = [&](auto&& val) { return val.is_type<int64_t>(); };
 #else
@@ -125,7 +127,7 @@ std::enable_if_t<is_part_of<T1, types...>::value && is_part_of<T2, types...>::va
 	return lhs op rhs; \
 } \
 template <typename T1, typename T2, typename... types> \
-std::enable_if_t<!(is_part_of<T1, types...>::value && is_part_of<T2, types...>::value), object> op_name(T1&& lhs, T2&& rhs) \
+std::enable_if_t<!(is_part_of<T1, types...>::value && is_part_of<T2, types...>::value), object> op_name(T1&&, T2&&) \
 { \
 	return nil_t{}; \
 } \
@@ -137,9 +139,11 @@ inline object operator op(const object& lhs, const object& rhs) \
 	object ret{ 0ll }; \
 	lhs.visit([&](auto&& lhs_item) \
 	{ \
+		/* NOTE: Fix for bug in GCC 4.9.3 */ \
+		using lhs_type = decltype(lhs_item); \
 		rhs.visit([&](auto&& rhs_item) \
 		{ \
-			ret = op_name<decltype(lhs_item), decltype(rhs_item), int64_t, double>(lhs_item, rhs_item); \
+			ret = op_name<lhs_type, decltype(rhs_item), int64_t, double>(lhs_item, rhs_item); \
 		}); \
 	}); \
 	return ret; \
