@@ -12,15 +12,9 @@ using variable_map_t = std::unordered_map<std::string, std::shared_ptr<object>>;
 
 struct context_t
 {
-	object evaluate_list(const object& list);
-
-	void add_variable(const std::string& name, std::shared_ptr<object> obj) {
-		auto it = variable_map.find(name);
-		if (it == variable_map.end())
-			variable_map.emplace(std::make_pair(name, obj));
-		else
-			it->second = obj;
-	}
+	object evaluate_list(const object& obj);
+	variable_map_t get_lambda_context(const std::vector<std::string>& params, const list_t& list) const;
+	void add_variable(const std::string& name, std::shared_ptr<object> obj);
 
 	struct interpreter_t& interpreter;
 	variable_map_t variable_map;

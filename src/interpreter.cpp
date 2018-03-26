@@ -1,5 +1,9 @@
 #include "interpreter.h"
 #include <iostream>
+#ifdef __MINGW32__
+#define __NO_INLINE__
+#endif
+#include <algorithm>
 
 static std::array<int, 2> find_next_token(const std::string& expr, size_t pos)
 {
@@ -125,8 +129,6 @@ object interpreter_t::expand_list(const list_t & list)
 
 object context_t::evaluate_list(const object& obj)
 {
-	//std::cout << "Evaluating " << obj << std::endl;
-
 	if (!obj.is_type<list_t>())
 	{
 		if (obj.is_type<variable_reference>())
@@ -169,7 +171,7 @@ object context_t::evaluate_list(const object& obj)
 	if (list[0].is_type<lambda_t>())
 	{
 		auto&& lambda = list[0].get_ref<lambda_t>();
-		auto new_context = *this;
+		auto new_context = context_t{interpreter, lambda.context};
 
 		int i = 1;
 		for (auto&& param : lambda.parameters)
@@ -199,6 +201,44 @@ object context_t::evaluate_list(const object& obj)
 	return evaluate_list(ret_list);
 }
 
+variable_map_t context_t::get_lambda_context(const std::vector<std::string>& params, const list_t& list) const
+{
+	variable_map_t ret;
+
+	for (auto&& item : list)
+	{
+		if (item.is_type<list_t>())
+		{
+			auto result = get_lambda_context(params, item.get_ref<list_t>());
+			ret.insert(result.begin(), result.end());
+			continue;
+		}
+		
+		if (item.is_type<variable_reference>())
+		{
+			auto&& variable_name = item.get_ref<variable_reference>();
+			if (std::binary_search(params.begin(), params.end(), variable_name))
+				continue;
+			auto it = variable_map.find(variable_name);
+            if (it != variable_map.end())
+            {
+                ret.emplace(*it);
+            }
+		}
+	}
+
+	return ret;
+}
+
+void context_t::add_variable(const std::string& name, std::shared_ptr<object> obj)
+{
+		auto it = variable_map.find(name);
+		if (it == variable_map.end())
+			variable_map.emplace(std::make_pair(name, obj));
+		else
+			it->second = obj;
+	}
+
 static bool is_truthy(context_t& context, const object& obj)
 {
 	if (obj.is_type<list_t>())
@@ -227,19 +267,19 @@ static bool is_truthy(context_t& context, const object& obj)
 interpreter_t::interpreter_t()
 	: global_context{ *this, variable_map_t{} }
 {
-	auto make_lambda = [&](const list_t& parameters, const list_t& body)
+	auto make_lambda = [&](const list_t& parameters, const list_t& body, const context_t& context)
 	{
 		std::vector<std::string> vec_params;
 		for (auto&& param : parameters)
 			vec_params.push_back(param.get_ref<std::string>());
-		return lambda_t{ vec_params, body };
+		return lambda_t{ vec_params, body, context.get_lambda_context(vec_params, body) };
 	};
 
-	auto lambda = [&](const list_t& list, context_t&) -> object
+	auto lambda = [&](const list_t& list, context_t& context) -> object
 	{
 		auto&& parameters = list[1].get_ref<list_t>();
 		auto&& body = list[2].get_ref<list_t>();
-		return make_lambda(parameters, body);
+		return make_lambda(parameters, body, context);
 	};
 
 	statements["lambda"] = lambda;
@@ -251,16 +291,14 @@ interpreter_t::interpreter_t()
 		{
 			auto&& list1 = list[1].get_ref<list_t>();
 			auto&& name = list1[0].get_ref<std::string>();
-			auto value = make_lambda(slice(list1, 1), list[2].get_ref<list_t>());
+			auto value = make_lambda(slice(list1, 1), list[2].get_ref<list_t>(), context);
 			context.add_variable(name, std::make_shared<object>(value));
-			//std::cout << "def function: " << name << " = " << value << std::endl;
 			return nil_t{};
 		}
 
 		auto&& name = list[1].get_ref<std::string>();
 		auto value = context.evaluate_list(list[2]);
 		context.add_variable(name, std::make_shared<object>(value));
-		//std::cout << "def: " << name << " = " << value << std::endl;
 		return nil_t{};
 	};
 
@@ -275,7 +313,6 @@ interpreter_t::interpreter_t()
 		for (auto&& item : conditions)
 		{
 			auto&& list_item = item.get_ref<list_t>();
-			//std::cout << "cond: evaluating " << list_item[0] << std::endl;
 			if (is_truthy(global_context, global_context.evaluate_list(list_item[0])))
 				return global_context.evaluate_list(list_item[1]);
 		}

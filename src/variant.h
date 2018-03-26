@@ -6,6 +6,12 @@
 #include <cassert>
 #include <memory>
 
+template <typename T>
+struct identity
+{
+	using type = T;
+};
+
 #define MAX_PROPERTY(prop) \
 template <typename T, typename... rest> \
 struct max_##prop \
@@ -63,13 +69,18 @@ struct get_index
 template <typename T, typename... Ts>
 struct is_part_of
 {
-	static constexpr auto value = any_of<std::is_same<std::remove_const_t<std::remove_reference_t<T>>, Ts>::value...>::value;
+	static constexpr auto value = any_of<
+		std::is_same<
+		std::remove_const_t<std::remove_reference_t<T>>, Ts>::value...>::value;
 };
 
 template <typename T>
 struct unique_ptr_with_copy : std::unique_ptr<T>
 {
 	using std::unique_ptr<T>::unique_ptr;
+
+	unique_ptr_with_copy(std::unique_ptr<T>&& src)
+		: std::unique_ptr<T>(std::move(src)) {}
 
 	unique_ptr_with_copy(const unique_ptr_with_copy& src)
 	{
@@ -78,30 +89,40 @@ struct unique_ptr_with_copy : std::unique_ptr<T>
 };
 
 template <typename T>
-struct recursive_variant_wrapper_tag : unique_ptr_with_copy<T> {};
+struct heap_wrapper : unique_ptr_with_copy<T>
+{
+	using unique_ptr_with_copy<T>::unique_ptr_with_copy;
+};
+
+template <typename T>
+struct substitute_heap_wrapper : identity<T> {};
+
+template <typename T>
+struct substitute_heap_wrapper<heap_wrapper<T>> : identity<T> {};
+
+template <typename T>
+using substitute_heap_wrapper_t = typename substitute_heap_wrapper<T>::type;
+
+template <typename T, typename... Ts>
+struct is_in_heap_wrapper
+{
+	static constexpr bool value = any_of<std::is_same<heap_wrapper<T>, Ts>::value...>::value;
+};
 
 template <size_t alignment, size_t size, typename... Ts>
 struct variant_impl
 {
-	template <typename T, typename = std::enable_if_t<is_part_of<T, Ts...>::value>>
-	variant_impl(T&& obj)
-	{
-		using real_t = std::remove_const_t<std::remove_reference_t<T>>;
-		new (buffer) real_t(std::forward<T>(obj));
-		set_index<real_t>();
+	template <typename T, typename = std::enable_if_t<is_part_of<T, substitute_heap_wrapper_t<Ts>...>::value>>
+	variant_impl(T&& obj) {
+		this->construct(std::forward<T>(obj));
 	}
 
-#define CONSTRUCT(qual) \
-	src.visit([&](auto&& val) { \
-		using real_t = std::remove_const_t<std::remove_reference_t<decltype(val)>>; \
-		new (buffer) real_t(static_cast<qual>(val)); \
-		this->set_index<real_t>(); \
-	});
-
-	variant_impl(const variant_impl& src) { CONSTRUCT(const real_t&); }
-	variant_impl(variant_impl&& src) { CONSTRUCT(real_t&&); }
-
-#undef CONSTRUCT
+	variant_impl(const variant_impl& src) {
+		src.visit([&](auto&& val) { this->construct(std::forward<decltype(val)>(val)); });
+	}
+	variant_impl(variant_impl&& src) {
+		src.visit([&](auto&& val) { this->construct(std::forward<decltype(val)>(val)); });
+	}
 
 	variant_impl& operator =(const variant_impl& src) { return assign(src); }
 	variant_impl& operator =(variant_impl&& src) { return assign(std::move(src)); }
@@ -119,20 +140,65 @@ struct variant_impl
 	template <typename fn_t>
 	void visit(fn_t&& fn) const { visit_impl<fn_t, 0, Ts...>(std::forward<fn_t>(fn)); }
 
-	template <typename T, typename = std::enable_if_t<any_of<(std::is_same<T, Ts>::value || std::is_base_of<T, Ts>::value)...>::value>>
-	auto& get_ref() { return reinterpret_cast<T&>(buffer); }
-	template <typename T, typename = std::enable_if_t<any_of<(std::is_same<T, Ts>::value || std::is_base_of<T, Ts>::value)...>::value>>
-	auto& get_ref() const { return reinterpret_cast<const T&>(buffer); }
+	template <typename T, typename = std::enable_if_t<
+		any_of<(std::is_same<substitute_heap_wrapper_t<T>, Ts>::value
+			|| std::is_base_of<substitute_heap_wrapper_t<T>, Ts>::value)...>::value >>
+		auto& get_ref() { return get_ref_impl<T>(); }
+
+	template <typename T, typename = std::enable_if_t<
+		any_of<(std::is_same<T, substitute_heap_wrapper_t<Ts>>::value
+			|| std::is_base_of<T, substitute_heap_wrapper_t<Ts>>::value)...>::value >>
+		auto& get_ref() const { return get_ref_impl<T>(); }
 
 	auto get_type_index() const { return type_index; }
 
 	template <typename T>
-	static auto get_index_of_type() { return get_index<T, Ts...>::value; }
+	static auto get_index_of_type() { return get_index<T, substitute_heap_wrapper_t<Ts>...>::value; }
 
 	template <typename T>
 	auto is_type() const { return get_type_index() == get_index_of_type<T>(); }
 
 private:
+	template <typename T>
+	std::enable_if_t<!is_in_heap_wrapper<std::remove_const_t<std::remove_reference_t<T>>, Ts...>::value> construct(T&& src)
+	{
+		using real_t = std::remove_const_t<std::remove_reference_t<T>>;
+		new (buffer) real_t(std::forward<T>(src));
+		set_index<real_t>();
+	}
+
+	template <typename T>
+	std::enable_if_t<is_in_heap_wrapper<std::remove_const_t<std::remove_reference_t<T>>, Ts...>::value> construct(T&& src)
+	{
+		using real_t = std::remove_const_t<std::remove_reference_t<T>>;
+		new (buffer) heap_wrapper<real_t>(std::make_unique<real_t>(std::forward<T>(src)));
+		set_index<real_t>();
+	}
+
+	template <typename T>
+	std::enable_if_t<!is_in_heap_wrapper<T, Ts...>::value, T&> get_ref_impl()
+	{
+		return reinterpret_cast<T&>(buffer);
+	}
+
+	template <typename T>
+	std::enable_if_t<is_in_heap_wrapper<T, Ts...>::value, T&> get_ref_impl()
+	{
+		return *reinterpret_cast<heap_wrapper<T>&>(buffer).get();
+	}
+
+	template <typename T>
+	std::enable_if_t<!is_in_heap_wrapper<T, Ts...>::value, const T&> get_ref_impl() const
+	{
+		return reinterpret_cast<const T&>(buffer);
+	}
+
+	template <typename T>
+	std::enable_if_t<is_in_heap_wrapper<T, Ts...>::value, const T&> get_ref_impl() const
+	{
+		return *reinterpret_cast<const heap_wrapper<T>&>(buffer).get();
+	}
+
 	template <typename T>
 	auto&& assign(T&& src)
 	{
@@ -142,7 +208,7 @@ private:
 	}
 
 	template <typename T>
-	void set_index() { type_index = get_index<T, Ts...>::value; }
+	void set_index() { type_index = get_index_of_type<T>(); }
 
 	template <typename fn_t, typename T>
 	struct dummy
@@ -154,12 +220,21 @@ private:
 		}
 	};
 	template <typename fn_t, typename T>
-	struct dummy<fn_t, recursive_variant_wrapper_tag<T>>
+	struct dummy<fn_t, heap_wrapper<T>>
 	{
 		template <typename buffer_t>
 		static void call_visitor(fn_t&& fn, buffer_t* buffer)
 		{
-			fn(reinterpret_cast<T&>(*reinterpret_cast<recursive_variant_wrapper_tag<T>&>(*buffer).get()));
+			fn(*reinterpret_cast<heap_wrapper<T>&>(*buffer).get());
+		}
+	};
+	template <typename fn_t, typename T>
+	struct dummy<fn_t, const heap_wrapper<T>>
+	{
+		template <typename buffer_t>
+		static void call_visitor(fn_t&& fn, buffer_t* buffer)
+		{
+			fn(*reinterpret_cast<const heap_wrapper<T>&>(*buffer).get());
 		}
 	};
 
@@ -199,12 +274,6 @@ template <typename T>
 struct is_complete<T, decltype(void(sizeof(T)))> : std::true_type {};
 
 struct recursive_variant_tag {};
-
-template <typename T>
-struct identity
-{
-	using type = T;
-};
 
 template <typename replacement, typename T>
 struct substitute : identity<T> {};

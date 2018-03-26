@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <iostream>
+#include <memory>
 using std::int64_t;
 
 #define TOKENIZE_IMPL(a, b) a##b
@@ -55,7 +56,8 @@ template <typename T>
 struct lambda_impl
 {
 	std::vector<std::string> parameters;
-	T body;
+	list_impl<T> body;
+	std::unordered_map<std::string, std::shared_ptr<T>> context;
 };
 
 using object = recursive_variant<
@@ -66,12 +68,12 @@ using object = recursive_variant<
 	std::string,
 	statement,
 	variable_reference,
-	lambda_impl<list_impl<recursive_variant_tag>>,
+	heap_wrapper<lambda_impl<recursive_variant_tag>>,
 	std::function<recursive_variant_tag(const list_impl<recursive_variant_tag>&, struct context_t&)>,
 	list_impl<recursive_variant_tag>>;
 
 using list_t = list_impl<object>;
-using lambda_t = lambda_impl<list_t>;
+using lambda_t = lambda_impl<object>;
 using builtin_func_t = std::function<object(const list_t&, struct context_t&)>;
 
 inline std::ostream& operator <<(std::ostream& lhs, nil_t)
@@ -84,12 +86,11 @@ inline std::ostream& operator <<(std::ostream& lhs, const list_t& rhs);
 
 inline std::ostream& operator <<(std::ostream& lhs, const lambda_t& rhs)
 {
-	lhs << "lambda:\n";
-	lhs << "parameters:";
+	lhs << "lambda: {parameters:";
 	for (auto&& item : rhs.parameters)
 		lhs << " " << item;
 	lhs << std::endl;
-	lhs << "body: " << rhs.body << std::endl;
+	lhs << ", body: " << rhs.body << "}\n";
 	return lhs;
 }
 
@@ -114,13 +115,11 @@ inline std::ostream& operator <<(std::ostream& lhs, const list_t& rhs)
 }
 
 #ifdef _MSC_VER
-#define CHECK auto check = [&](auto&& val) { return val.is_type<int64_t>() || val.is_type<double>(); };
-#define CHECK_INT auto check = [&](auto&& val) { return val.is_type<int64_t>(); };
+#define TYPE_CHECK auto check = [&](auto&& val) { return val.is_type<int64_t>() || val.is_type<double>(); };
 #else
-#define CHECK auto check = [&](auto&& val) { return val.template is_type<int64_t>() || val.template is_type<double>(); };
-#define CHECK_INT auto check = [&](auto&& val) { return val.template is_type<int64_t>(); };
+#define TYPE_CHECK auto check = [&](auto&& val) { return val.template is_type<int64_t>() || val.template is_type<double>(); };
 #endif
-#define MAKE_SEXPR_OP_OVERLOAD_IMPL(op, type_check, op_name) \
+#define MAKE_SEXPR_OP_OVERLOAD_IMPL(op, op_name) \
 template <typename T1, typename T2, typename... types> \
 std::enable_if_t<is_part_of<T1, types...>::value && is_part_of<T2, types...>::value, object> op_name(T1&& lhs, T2&& rhs) \
 { \
@@ -133,13 +132,13 @@ std::enable_if_t<!(is_part_of<T1, types...>::value && is_part_of<T2, types...>::
 } \
 inline object operator op(const object& lhs, const object& rhs) \
 { \
-	type_check \
+	TYPE_CHECK \
 	if (!check(lhs) || !check(rhs)) \
 		throw std::runtime_error{ std::string{"Can't " #op " types "} +std::to_string(lhs.get_type_index()) + " and " + std::to_string(rhs.get_type_index()) }; \
 	object ret{ 0ll }; \
 	lhs.visit([&](auto&& lhs_item) \
 	{ \
-		/* NOTE: Fix for bug in GCC 4.9.3 */ \
+		/* Fix for bug with decltype in nested lambdas in GCC 4.9.3 */ \
 		using lhs_type = decltype(lhs_item); \
 		rhs.visit([&](auto&& rhs_item) \
 		{ \
@@ -149,7 +148,7 @@ inline object operator op(const object& lhs, const object& rhs) \
 	return ret; \
 }
 
-#define MAKE_SEXPR_OP_OVERLOAD(op) MAKE_SEXPR_OP_OVERLOAD_IMPL(op, CHECK, TOKENIZE(do_op, __COUNTER__))
+#define MAKE_SEXPR_OP_OVERLOAD(op) MAKE_SEXPR_OP_OVERLOAD_IMPL(op, TOKENIZE(do_op, __COUNTER__))
 
 MAKE_SEXPR_OP_OVERLOAD(+)
 MAKE_SEXPR_OP_OVERLOAD(-)

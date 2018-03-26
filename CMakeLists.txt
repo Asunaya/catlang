@@ -14,8 +14,8 @@ if (HAS_MSVC_FLAGS)
 endif()
 
 file(GLOB catlang_src
-    "catlang/*.h"
-    "catlang/*.cpp"
+    "src/*.h"
+    "src/*.cpp"
 )
 
 add_executable(catlang ${catlang_src})
